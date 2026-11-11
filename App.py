@@ -1,4 +1,3 @@
-import os
 import io
 import html
 import numpy as np
@@ -95,7 +94,7 @@ def build_coverage(df_tim, df_site, chunk=2000):
     return pd.DataFrame({
         "Site ID": col_values(sites, "Site ID", "Unknown Site"),
         "Site Lat": slat, "Site Long": slon,
-        "Nearest Team": col_values(best, "NAMA", "Unknown"), # Menggunakan 'NAMA' sesuai data terakhir
+        "Nearest Team": col_values(best, "NAMA", "Unknown"), 
         "Team Lat": tlat[nearest], "Team Long": tlon[nearest],
         "Attitude": col_values(best, "ATTITUDE TIM", "UNKNOWN"),
         "Jarak (KM)": np.round(min_dist, 2),
@@ -115,20 +114,17 @@ def convert_df_to_excel(df, sheet_name="Data"):
     return output.getvalue()
 
 # ==========================================
-# --- 3. INISIALISASI DATA DARI REPOSITORI ---
+# --- 3. INISIALISASI SESSION STATE ---
 # ==========================================
-def load_init_data(key, filepath, default_cols):
+def init_state(key, default_cols):
     if key not in st.session_state:
-        if os.path.exists(filepath):
-            st.session_state[key] = pd.read_excel(filepath)
-        else:
-            st.session_state[key] = pd.DataFrame(columns=default_cols)
+        st.session_state[key] = pd.DataFrame(columns=default_cols)
 
-load_init_data('df_relokasi', 'data/relokasi.xlsx', ['Site Donor', 'Site Acceptor', 'Tipe Battery', 'Status', 'Tanggal'])
-load_init_data('df_tim', 'data/tim_monitoring.xlsx', ['NO', 'Regional', 'Cluster', 'NAMA', 'Lat', 'Long', 'STATUS', 'ROLE', 'ATTITUDE TIM', 'REMARK'])
-load_init_data('df_site', 'data/site_master.xlsx', ['Site ID', 'Latitude Tujuan', 'Longtitude Tujuan'])
-load_init_data('df_helpdesk', 'data/helpdesk.xlsx', ['Nama Helpdesk', 'Area', 'Lat', 'Long', 'Kapasitas Handling'])
-load_init_data('df_sparepart', 'data/sparepart.xlsx', ['Kode Part', 'Nama Part', 'Kategori', 'Stok Fisik', 'Lokasi Simpan'])
+init_state('df_relokasi', ['Site Donor', 'Site Acceptor', 'Tipe Battery', 'Status', 'Tanggal'])
+init_state('df_tim', ['NO', 'Regional', 'Cluster', 'NAMA', 'Lat', 'Long', 'STATUS', 'ROLE', 'ATTITUDE TIM', 'REMARK'])
+init_state('df_site', ['Site ID', 'Latitude Tujuan', 'Longtitude Tujuan'])
+init_state('df_helpdesk', ['Nama Helpdesk', 'Area', 'Lat', 'Long', 'Kapasitas Handling'])
+init_state('df_sparepart', ['Kode Part', 'Nama Part', 'Kategori', 'Stok Fisik', 'Lokasi Simpan'])
 
 # ==========================================
 # --- 4. MENU SIDEBAR (KONSEP 5 POIN) ---
@@ -158,30 +154,47 @@ if "flash" in st.session_state:
 # ----------------------------------------
 if menu == "1. 🔋 Relokasi Battery":
     st.header("Relokasi Battery (Bronze to Gold & Platinum)")
+    
+    if st.session_state.df_relokasi.empty:
+        st.info("Tabel Relokasi masih kosong. Anda bisa meng-upload file Excel (contoh: relokasi.xlsx) atau langsung mengisinya di bawah.")
+        f_upload = st.file_uploader("Upload Data Relokasi (Excel)", type=['xlsx'])
+        if f_upload:
+            st.session_state.df_relokasi = pd.read_excel(f_upload)
+            st.rerun()
+            
     edited_df = st.data_editor(st.session_state.df_relokasi, num_rows="dynamic", use_container_width=True, height=400)
     col1, col2 = st.columns([1, 4])
     with col1:
         if st.button("💾 Update Relokasi", use_container_width=True):
             st.session_state.df_relokasi = edited_df
-            st.session_state.flash = "✅ Berhasil!"
+            st.session_state.flash = "✅ Data Relokasi Berhasil Disimpan!"
             st.rerun()
     with col2:
-        st.download_button("📥 Master Relokasi (Excel)", convert_df_to_excel(st.session_state.df_relokasi, "Relokasi"), "Master_Relokasi.xlsx")
+        st.download_button("📥 Download Master Relokasi", convert_df_to_excel(st.session_state.df_relokasi, "Relokasi"), "Master_Relokasi.xlsx")
 
 # ----------------------------------------
 # MENU 2: MONITORING TIM
 # ----------------------------------------
 elif menu == "2. 👥 Monitoring Lamandau & Tim":
     st.header("Monitoring Tim & Spesial Cluster")
-    edited_tim = st.data_editor(st.session_state.df_tim, num_rows="dynamic", use_container_width=True, height=400)
-    col1, col2 = st.columns([1, 4])
-    with col1:
-        if st.button("💾 Update Tim", use_container_width=True):
-            st.session_state.df_tim = clean_df(edited_tim, TIM_LAT, TIM_LON)
-            st.session_state.flash = "✅ Berhasil!"
+    
+    if st.session_state.df_tim.empty:
+        st.warning("⚠️ Data Tim kosong! Silakan upload file 'tim_monitoring.xlsx' Anda di sini:")
+        f_upload = st.file_uploader("Upload tim_monitoring.xlsx", type=['xlsx'])
+        if f_upload:
+            st.session_state.df_tim = pd.read_excel(f_upload)
             st.rerun()
-    with col2:
-        st.download_button("📥 Master Tim (Excel)", convert_df_to_excel(st.session_state.df_tim, "Tim"), "Master_Tim.xlsx")
+
+    if not st.session_state.df_tim.empty:
+        edited_tim = st.data_editor(st.session_state.df_tim, num_rows="dynamic", use_container_width=True, height=400)
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            if st.button("💾 Update Tim", use_container_width=True):
+                st.session_state.df_tim = clean_df(edited_tim, TIM_LAT, TIM_LON)
+                st.session_state.flash = "✅ Data Tim Berhasil Disimpan!"
+                st.rerun()
+        with col2:
+            st.download_button("📥 Download Master Tim", convert_df_to_excel(st.session_state.df_tim, "Tim"), "Master_Tim.xlsx")
 
 # ----------------------------------------
 # MENU 3: TEAM RE-MAPPING & COVERAGE
@@ -189,77 +202,89 @@ elif menu == "2. 👥 Monitoring Lamandau & Tim":
 elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
     st.header("Team Enhancement & Re-Mapping")
     
-    tab_map, tab_site = st.tabs(["🗺️ Peta & Analisis Beban Kerja", "🗼 Update Master Site"])
-    
-    with tab_map:
-        df_coverage = build_coverage(st.session_state.df_tim, st.session_state.df_site)
-        
-        if df_coverage.empty:
-            st.warning("Pastikan koordinat Tim dan Site valid.")
-        else:
-            # 1. Tampilkan Peta
-            m = folium.Map(location=[df_coverage["Site Lat"].mean(), df_coverage["Site Long"].mean()], zoom_start=8, tiles="CartoDB positron")
-            plugins.Fullscreen().add_to(m)
-
-            team_ok = valid_coord(to_num(st.session_state.df_tim[TIM_LAT]), to_num(st.session_state.df_tim[TIM_LON]))
-            for _, team in st.session_state.df_tim[team_ok].iterrows():
-                warna = attitude_color(team.get("ATTITUDE TIM", ""))
-                html_popup = f"<div style='width: 200px;'><h4 style='color: {warna};'>{esc(team.get('NAMA'))}</h4><b>Attitude:</b> {esc(team.get('ATTITUDE TIM'))}</div>"
-                folium.Marker([float(team[TIM_LAT]), float(team[TIM_LON])], popup=folium.Popup(html_popup, max_width=250), icon=folium.Icon(color=warna, icon="wrench", prefix="fa")).add_to(m)
-
-            for row in df_coverage.itertuples(index=False):
-                folium.CircleMarker(location=[row[1], row[2]], radius=4, color="black", fill=True, popup=f"<b>{esc(row[0])}</b><br>Tim: {esc(row[3])}<br>Jarak: {row[7]} KM").add_to(m)
-                plugins.AntPath(locations=[[row[4], row[5]], [row[1], row[2]]], color="blue", weight=2, opacity=0.5, dash_array=[10, 20], delay=1000, tooltip=f"{esc(row[0])} ➔ {esc(row[3])} ({row[7]} KM)").add_to(m)
-
-            st_folium(m, width=1300, height=500, returned_objects=[])
-            
-            st.markdown("---")
-            st.subheader("📊 Insight: Distribusi Beban Coverage Tim & Jarak")
-            
-            # 2. Tampilkan Tabel Rekapan Data (Workload / Distribusi)
-            col_insight1, col_insight2 = st.columns([1, 2])
-            
-            with col_insight1:
-                st.markdown("**1. Tim dengan Beban Site Terbanyak (Workload)**")
-                # Group data untuk menghitung jumlah Site per Tim
-                df_workload = df_coverage.groupby('Nearest Team')['Site ID'].count().reset_index()
-                df_workload.columns = ['Nama Tim', 'Total Site (Coverage)']
-                df_workload = df_workload.sort_values('Total Site (Coverage)', ascending=False).reset_index(drop=True)
-                
-                # Tampilkan di UI
-                st.dataframe(df_workload, use_container_width=True, height=350)
-                
-            with col_insight2:
-                st.markdown("**2. Detail Jarak Site ke Tim Terdekat**")
-                # Tampilkan data mendetail (Site ID, Tim, Jarak, Attitude)
-                df_detail = df_coverage[['Site ID', 'Nearest Team', 'Attitude', 'Jarak (KM)']]
-                st.dataframe(df_detail, use_container_width=True, height=350)
-            
-            # Tombol Download Lengkap
-            st.download_button(
-                "📥 Download Laporan Mapping Coverage Lengkap (Excel)", 
-                convert_df_to_excel(df_coverage, "Mapping_Coverage"), 
-                "Analisis_Mapping_Coverage.xlsx", 
-                type="primary", 
-                use_container_width=True
-            )
-
-    with tab_site:
-        edited_site = st.data_editor(st.session_state.df_site, num_rows="dynamic", use_container_width=True, height=400)
-        col1, col2 = st.columns([1, 4])
-        with col1:
-            if st.button("💾 Update Site", use_container_width=True):
-                st.session_state.df_site = clean_df(edited_site, SITE_LAT, SITE_LON)
-                st.session_state.flash = "✅ Berhasil!"
+    # Peringatan jika data belum di-upload
+    if st.session_state.df_tim.empty or st.session_state.df_site.empty:
+        st.error("🚨 Anda belum meng-upload Master Data Tim atau Site. Peta tidak bisa digambar.")
+        st.info("Upload file Excel Anda di bawah ini:")
+        col_up1, col_up2 = st.columns(2)
+        with col_up1:
+            f_tim = st.file_uploader("1. Upload tim_monitoring.xlsx", type=['xlsx'])
+            if f_tim:
+                st.session_state.df_tim = pd.read_excel(f_tim)
                 st.rerun()
-        with col2:
-            st.download_button("📥 Master Site (Excel)", convert_df_to_excel(st.session_state.df_site, "Site"), "Master_Site.xlsx")
+        with col_up2:
+            f_site = st.file_uploader("2. Upload site_master.xlsx", type=['xlsx'])
+            if f_site:
+                st.session_state.df_site = pd.read_excel(f_site)
+                st.rerun()
+
+    # Jika data sudah lengkap, tampilkan Peta & Tabel
+    if not st.session_state.df_tim.empty and not st.session_state.df_site.empty:
+        tab_map, tab_site = st.tabs(["🗺️ Peta & Analisis Beban Kerja", "🗼 Update Master Site"])
+        
+        with tab_map:
+            df_coverage = build_coverage(st.session_state.df_tim, st.session_state.df_site)
+            
+            if df_coverage.empty:
+                st.warning("Pastikan format kolom koordinat Tim dan Site (Lat/Long) sudah terisi.")
+            else:
+                m = folium.Map(location=[df_coverage["Site Lat"].mean(), df_coverage["Site Long"].mean()], zoom_start=8, tiles="CartoDB positron")
+                plugins.Fullscreen().add_to(m)
+
+                team_ok = valid_coord(to_num(st.session_state.df_tim[TIM_LAT]), to_num(st.session_state.df_tim[TIM_LON]))
+                for _, team in st.session_state.df_tim[team_ok].iterrows():
+                    warna = attitude_color(team.get("ATTITUDE TIM", ""))
+                    html_popup = f"<div style='width: 200px;'><h4 style='color: {warna};'>{esc(team.get('NAMA'))}</h4><b>Attitude:</b> {esc(team.get('ATTITUDE TIM'))}</div>"
+                    folium.Marker([float(team[TIM_LAT]), float(team[TIM_LON])], popup=folium.Popup(html_popup, max_width=250), icon=folium.Icon(color=warna, icon="wrench", prefix="fa")).add_to(m)
+
+                for row in df_coverage.itertuples(index=False):
+                    folium.CircleMarker(location=[row[1], row[2]], radius=4, color="black", fill=True, popup=f"<b>{esc(row[0])}</b><br>Tim: {esc(row[3])}<br>Jarak: {row[7]} KM").add_to(m)
+                    plugins.AntPath(locations=[[row[4], row[5]], [row[1], row[2]]], color="blue", weight=2, opacity=0.5, dash_array=[10, 20], delay=1000, tooltip=f"{esc(row[0])} ➔ {esc(row[3])} ({row[7]} KM)").add_to(m)
+
+                st_folium(m, width=1300, height=500, returned_objects=[])
+                
+                st.markdown("---")
+                st.subheader("📊 Insight: Distribusi Beban Coverage Tim & Jarak")
+                
+                col_insight1, col_insight2 = st.columns([1, 2])
+                with col_insight1:
+                    st.markdown("**1. Tim dengan Beban Site Terbanyak (Workload)**")
+                    df_workload = df_coverage.groupby('Nearest Team')['Site ID'].count().reset_index()
+                    df_workload.columns = ['Nama Tim', 'Total Site (Coverage)']
+                    df_workload = df_workload.sort_values('Total Site (Coverage)', ascending=False).reset_index(drop=True)
+                    st.dataframe(df_workload, use_container_width=True, height=350)
+                    
+                with col_insight2:
+                    st.markdown("**2. Detail Jarak Site ke Tim Terdekat**")
+                    df_detail = df_coverage[['Site ID', 'Nearest Team', 'Attitude', 'Jarak (KM)']]
+                    st.dataframe(df_detail, use_container_width=True, height=350)
+                
+                st.download_button("📥 Download Laporan Mapping Coverage Lengkap", convert_df_to_excel(df_coverage, "Mapping_Coverage"), "Analisis_Mapping_Coverage.xlsx", type="primary", use_container_width=True)
+
+        with tab_site:
+            edited_site = st.data_editor(st.session_state.df_site, num_rows="dynamic", use_container_width=True, height=400)
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                if st.button("💾 Update Site", use_container_width=True):
+                    st.session_state.df_site = clean_df(edited_site, SITE_LAT, SITE_LON)
+                    st.session_state.flash = "✅ Data Site Berhasil Disimpan!"
+                    st.rerun()
+            with col2:
+                st.download_button("📥 Master Site (Excel)", convert_df_to_excel(st.session_state.df_site, "Site"), "Master_Site.xlsx")
 
 # ----------------------------------------
 # MENU 4: HELPDESK MAPPING
 # ----------------------------------------
 elif menu == "4. 🎧 Helpdesk Mapping":
     st.header("Helpdesk Mapping - Pangkalanbun")
+    
+    if st.session_state.df_helpdesk.empty:
+        st.info("Upload file Helpdesk.xlsx jika Anda punya datanya, atau ketik langsung di tabel bawah.")
+        f_hd = st.file_uploader("Upload Data Helpdesk", type=['xlsx'])
+        if f_hd:
+            st.session_state.df_helpdesk = pd.read_excel(f_hd)
+            st.rerun()
+
     df_hd = st.session_state.df_helpdesk
     if not df_hd.empty and HD_LAT in df_hd.columns:
         hd_ok = valid_coord(to_num(df_hd[HD_LAT]), to_num(df_hd[HD_LON]))
@@ -274,7 +299,7 @@ elif menu == "4. 🎧 Helpdesk Mapping":
     with col1:
         if st.button("💾 Update Helpdesk", use_container_width=True):
             st.session_state.df_helpdesk = clean_df(edited_hd, HD_LAT, HD_LON)
-            st.session_state.flash = "✅ Berhasil!"
+            st.session_state.flash = "✅ Data Helpdesk Disimpan!"
             st.rerun()
     with col2:
         st.download_button("📥 Master Helpdesk", convert_df_to_excel(st.session_state.df_helpdesk, "Helpdesk"), "Master_Helpdesk.xlsx")
@@ -284,12 +309,20 @@ elif menu == "4. 🎧 Helpdesk Mapping":
 # ----------------------------------------
 elif menu == "5. ⚙️ Spare Part Management":
     st.header("Spare Part Management")
+    
+    if st.session_state.df_sparepart.empty:
+        st.info("Upload file Sparepart.xlsx jika Anda punya datanya.")
+        f_sp = st.file_uploader("Upload Data Spare Part", type=['xlsx'])
+        if f_sp:
+            st.session_state.df_sparepart = pd.read_excel(f_sp)
+            st.rerun()
+            
     edited_sp = st.data_editor(st.session_state.df_sparepart, num_rows="dynamic", use_container_width=True, height=400)
     col1, col2 = st.columns([1, 4])
     with col1:
         if st.button("💾 Update Sparepart", use_container_width=True):
             st.session_state.df_sparepart = edited_sp
-            st.session_state.flash = "✅ Berhasil!"
+            st.session_state.flash = "✅ Data Spare Part Disimpan!"
             st.rerun()
     with col2:
         st.download_button("📥 Master Spare Part", convert_df_to_excel(st.session_state.df_sparepart, "Sparepart"), "Master_Sparepart.xlsx")
