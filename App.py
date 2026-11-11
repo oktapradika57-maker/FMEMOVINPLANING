@@ -49,7 +49,6 @@ def clean_df(df, lat_col, lon_col):
                     df = df.rename(columns={lower_map[alias]: target})
                     break
 
-    # ANTI-CRASH: Paksa pastikan kolom koordinat selalu ada walau file user kacau
     for c in (lat_col, lon_col):
         if c in df.columns:
             df[c] = to_num(df[c])
@@ -72,6 +71,8 @@ def col_values(df, name, default):
         return df[name].fillna(default).to_numpy()
     return np.array([default] * len(df), dtype=object)
 
+# PENAMBAHAN CACHE DI SINI (Anti-CPU Throttle)
+@st.cache_data
 def build_coverage(df_tim, df_site, chunk=2000):
     out_cols = ["Site ID", "Site Class", "Site Lat", "Site Long", "Nearest Team", "Team Lat", "Team Long", "Attitude", "Jarak (KM)"]
     
@@ -82,7 +83,6 @@ def build_coverage(df_tim, df_site, chunk=2000):
 
     teams, sites = df_tim[team_ok], df_site[site_ok]
     
-    # ANTI-CRASH: Jika file yang diupload ternyata kosong atau tidak terbaca kordinatnya
     if teams.empty or sites.empty:
         return pd.DataFrame(columns=out_cols)
 
@@ -189,7 +189,6 @@ elif menu == "2. 👥 Monitoring Lamandau & Tim":
         if f_upload:
             if st.button("🚀 Proses Data", type="primary"):
                 f_upload.seek(0)
-                # DIBERSIHKAN SEJAK AWAL AGAR TIDAK ERROR
                 st.session_state.df_tim = clean_df(pd.read_excel(f_upload), TIM_LAT, TIM_LON)
                 st.rerun()
     if not st.session_state.df_tim.empty:
@@ -199,6 +198,7 @@ elif menu == "2. 👥 Monitoring Lamandau & Tim":
             if st.button("💾 Simpan Master Tim", use_container_width=True):
                 st.session_state.df_tim = clean_df(edited_tim, TIM_LAT, TIM_LON)
                 st.session_state.flash = "✅ Data Tim Berhasil Disimpan!"
+                build_coverage.clear() # Hapus cache lama jika Master Tim di-update
                 st.rerun()
         with col2:
             st.download_button("📥 Download Master Tim", convert_df_to_excel(st.session_state.df_tim, "Tim"), "Master_Tim.xlsx")
@@ -221,9 +221,9 @@ elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
             if st.button("🚀 PROSES KEDUA DATA & TAMPILKAN PETA", use_container_width=True, type="primary"):
                 f_tim.seek(0)
                 f_site.seek(0)
-                # ANTI-CRASH: Langsung dibersihkan begitu masuk
                 st.session_state.df_tim = clean_df(pd.read_excel(f_tim), TIM_LAT, TIM_LON)
                 st.session_state.df_site = clean_df(pd.read_excel(f_site), SITE_LAT, SITE_LON)
+                build_coverage.clear() # Bersihkan cache
                 st.session_state.flash = "✅ Data Tim dan Site Berhasil Dimuat!"
                 st.rerun()
 
@@ -231,6 +231,7 @@ elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
         tab_map, tab_site = st.tabs(["🗺️ Peta Interaktif & Filter", "🗼 Update Master Site"])
         
         with tab_map:
+            # Menggunakan CACHE yang sudah diproses
             df_coverage_master = build_coverage(st.session_state.df_tim, st.session_state.df_site)
             
             with st.expander("🔍 Filter & Pencarian Spesifik (Site ID, Nama Tim, Role)", expanded=True):
@@ -267,7 +268,6 @@ elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
             if df_cov_filtered.empty and df_tim_filtered.empty:
                 st.warning("Pencarian tidak menemukan hasil. Silakan ubah kriteria filter Anda.")
             else:
-                # ANTI-CRASH: Fungsi matematika aman tanpa .apply() yang menyebabkan error sebelumnya
                 lat_all = pd.concat([df_cov_filtered['Site Lat'], df_tim_filtered[TIM_LAT]]).dropna()
                 lon_all = pd.concat([df_cov_filtered['Site Long'], df_tim_filtered[TIM_LON]]).dropna()
                 
@@ -353,6 +353,7 @@ elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
             with col1:
                 if st.button("💾 Simpan Master Site", use_container_width=True):
                     st.session_state.df_site = clean_df(edited_site, SITE_LAT, SITE_LON)
+                    build_coverage.clear() # Hapus cache lama jika Master Site di-update
                     st.session_state.flash = "✅ Data Site Berhasil Disimpan!"
                     st.rerun()
             with col2:
