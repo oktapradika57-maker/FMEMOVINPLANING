@@ -127,7 +127,7 @@ init_state('df_helpdesk', ['Nama Helpdesk', 'Area', 'Lat', 'Long', 'Kapasitas Ha
 init_state('df_sparepart', ['Kode Part', 'Nama Part', 'Kategori', 'Stok Fisik', 'Lokasi Simpan'])
 
 # ==========================================
-# --- 4. MENU SIDEBAR (KONSEP 5 POIN) ---
+# --- 4. MENU SIDEBAR ---
 # ==========================================
 st.sidebar.image("https://upload.wikimedia.org/wikipedia/commons/thumb/c/c2/Telkom_Indonesia_2013.svg/1200px-Telkom_Indonesia_2013.svg.png", width=150)
 st.sidebar.title("Navigasi Operasional")
@@ -202,7 +202,7 @@ elif menu == "2. 👥 Monitoring Lamandau & Tim":
             st.download_button("📥 Download Master Tim", convert_df_to_excel(st.session_state.df_tim, "Tim"), "Master_Tim.xlsx")
 
 # ----------------------------------------
-# MENU 3: TEAM RE-MAPPING & COVERAGE
+# MENU 3: TEAM RE-MAPPING & COVERAGE (BALON & SATELIT)
 # ----------------------------------------
 elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
     st.header("Team Enhancement & Re-Mapping")
@@ -217,7 +217,6 @@ elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
         with col_up2:
             f_site = st.file_uploader("2. Upload site_master.xlsx", type=['xlsx'], key="up_map_site")
 
-        # Tombol ini hanya akan muncul jika KEDUA file sudah ditaruh di kotak upload
         if f_tim is not None and f_site is not None:
             if st.button("🚀 PROSES KEDUA DATA & TAMPILKAN PETA", use_container_width=True, type="primary"):
                 f_tim.seek(0)
@@ -228,7 +227,7 @@ elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
                 st.rerun()
 
     else:
-        tab_map, tab_site = st.tabs(["🗺️ Peta & Analisis Beban Kerja", "🗼 Update Master Site"])
+        tab_map, tab_site = st.tabs(["🗺️ Peta Balon Coverage", "🗼 Update Master Site"])
         
         with tab_map:
             df_coverage = build_coverage(st.session_state.df_tim, st.session_state.df_site)
@@ -236,18 +235,84 @@ elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
             if df_coverage.empty:
                 st.warning("Pastikan format kolom koordinat Tim dan Site (Lat/Long) sudah terisi dengan angka yang benar.")
             else:
-                m = folium.Map(location=[df_coverage["Site Lat"].mean(), df_coverage["Site Long"].mean()], zoom_start=8, tiles="CartoDB positron")
+                # Titik tengah peta
+                start_lat = df_coverage["Site Lat"].mean()
+                start_lon = df_coverage["Site Long"].mean()
+                
+                # Inisialisasi Peta
+                m = folium.Map(location=[start_lat, start_lon], zoom_start=8)
                 plugins.Fullscreen().add_to(m)
 
+                # --- 1. SETTING LAYER PETA (SATELIT VS STANDAR) ---
+                folium.TileLayer('CartoDB positron', name='Peta Terang Standar').add_to(m)
+                folium.TileLayer(
+                    tiles='https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+                    attr='Google Satellite',
+                    name='Peta Satelit (Google)',
+                    overlay=False,
+                    control=True
+                ).add_to(m)
+
+                # --- 2. HITUNG DATA UNTUK BALON COVERAGE ---
+                # Mengambil informasi total site yang dicover dan jarak terjauh untuk masing-masing tim
+                workload = df_coverage.groupby('Nearest Team').agg(
+                    Total_Site=('Site ID', 'count'),
+                    Max_Jarak=('Jarak (KM)', 'max')
+                ).reset_index()
+                workload_dict = workload.set_index('Nearest Team').to_dict('index')
+
+                # --- 3. GAMBAR BALON & MARKER TIM ---
                 team_ok = valid_coord(to_num(st.session_state.df_tim[TIM_LAT]), to_num(st.session_state.df_tim[TIM_LON]))
                 for _, team in st.session_state.df_tim[team_ok].iterrows():
+                    team_name = team.get("NAMA", "Unknown")
                     warna = attitude_color(team.get("ATTITUDE TIM", ""))
-                    html_popup = f"<div style='width: 200px;'><h4 style='color: {warna};'>{esc(team.get('NAMA'))}</h4><b>Attitude:</b> {esc(team.get('ATTITUDE TIM'))}</div>"
-                    folium.Marker([float(team[TIM_LAT]), float(team[TIM_LON])], popup=folium.Popup(html_popup, max_width=250), icon=folium.Icon(color=warna, icon="wrench", prefix="fa")).add_to(m)
+                    t_lat = float(team[TIM_LAT])
+                    t_lon = float(team[TIM_LON])
 
+                    # Ambil statistik untuk tim ini
+                    stats = workload_dict.get(team_name, {'Total_Site': 0, 'Max_Jarak': 0})
+                    total_site = stats['Total_Site']
+                    max_jarak = stats['Max_Jarak']
+
+                    # Gambar Balon Coverage (Lingkaran)
+                    if total_site > 0:
+                        radius_meter = max_jarak * 1000 # Konversi KM ke Meter untuk Folium
+                        folium.Circle(
+                            location=[t_lat, t_lon],
+                            radius=radius_meter,
+                            color=warna,
+                            weight=1,
+                            fill=True,
+                            fill_opacity=0.15,
+                            tooltip=f"🎈 Area Coverage {team_name}<br>Total Cover: {total_site} Site<br>Jarak Terjauh: {max_jarak} KM"
+                        ).add_to(m)
+
+                    # Gambar Marker Ikon Tim
+                    html_popup = f"<div style='width: 200px;'><h4 style='color: {warna};'>{esc(team_name)}</h4><b>Attitude:</b> {esc(team.get('ATTITUDE TIM'))}<br><b>Total Site Di-cover:</b> {total_site}</div>"
+                    folium.Marker(
+                        [t_lat, t_lon], 
+                        popup=folium.Popup(html_popup, max_width=250), 
+                        icon=folium.Icon(color=warna, icon="wrench", prefix="fa")
+                    ).add_to(m)
+
+                # --- 4. GAMBAR SITE & GARIS STATIS TIPIS ---
                 for row in df_coverage.itertuples(index=False):
-                    folium.CircleMarker(location=[row[1], row[2]], radius=4, color="black", fill=True, popup=f"<b>{esc(row[0])}</b><br>Tim: {esc(row[3])}<br>Jarak: {row[7]} KM").add_to(m)
-                    plugins.AntPath(locations=[[row[4], row[5]], [row[1], row[2]]], color="blue", weight=2, opacity=0.5, dash_array=[10, 20], delay=1000, tooltip=f"{esc(row[0])} ➔ {esc(row[3])} ({row[7]} KM)").add_to(m)
+                    # Marker Site
+                    folium.CircleMarker(
+                        location=[row[1], row[2]], 
+                        radius=4, color="black", fill=True, 
+                        popup=f"<b>{esc(row[0])}</b><br>Tim: {esc(row[3])}<br>Jarak: {row[7]} KM"
+                    ).add_to(m)
+                    
+                    # Garis hubung tipis transparan (tanpa animasi)
+                    folium.PolyLine(
+                        locations=[[row[4], row[5]], [row[1], row[2]]], 
+                        color="gray", weight=1, opacity=0.4, 
+                        tooltip=f"{esc(row[0])} ➔ {esc(row[3])} ({row[7]} KM)"
+                    ).add_to(m)
+
+                # Tambahkan tombol kontrol untuk mengganti tipe peta di pojok kanan atas
+                folium.LayerControl().add_to(m)
 
                 st_folium(m, width=1300, height=500, returned_objects=[])
                 
