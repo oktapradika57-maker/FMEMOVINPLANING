@@ -60,6 +60,47 @@ def clean_df(df, lat_col, lon_col):
             df[c] = df[c].where(df[c].isna(), df[c].astype(str))
     return df
 
+def parse_program_excel(f_upload):
+    """Fungsi auto-parse cerdas untuk membaca file Program Nop Pbun yang berantakan"""
+    xls = pd.ExcelFile(f_upload)
+    all_programs = []
+    for s in xls.sheet_names:
+        try:
+            df = pd.read_excel(xls, sheet_name=s)
+            header_row = -1
+            # Mencari baris yang mengandung tulisan Site Id
+            for i, row in df.head(15).iterrows():
+                if any(str(v).strip().lower() in ['site id', 'site_id'] for v in row.values):
+                    header_row = i
+                    break
+            
+            if header_row != -1:
+                df.columns = df.iloc[header_row]
+                df = df.iloc[header_row+1:].reset_index(drop=True)
+                df.columns = [str(c).strip() for c in df.columns]
+                
+                col_lower = {c.lower(): c for c in df.columns}
+                if 'site id' in col_lower:
+                    df = df.rename(columns={col_lower['site id']: 'Site ID'})
+                
+                if 'Site ID' in df.columns:
+                    df = df.dropna(subset=['Site ID'])
+                    if not df.empty:
+                        all_programs.append(df)
+        except Exception:
+            continue
+
+    if all_programs:
+        df_merged = pd.concat(all_programs, ignore_index=True)
+        cols_to_keep = ['Site ID']
+        for c in ['Catagory', 'Ditail', 'Status', 'Pic']:
+            for actual_col in df_merged.columns:
+                if str(actual_col).strip().lower() == c.lower() and actual_col not in cols_to_keep:
+                    cols_to_keep.append(actual_col)
+        return df_merged[cols_to_keep]
+    else:
+        return pd.DataFrame(columns=["Site ID", "Catagory", "Ditail", "Status", "Pic"])
+
 def haversine_matrix(lat1, lon1, lat2, lon2):
     lat1, lon1 = np.radians(lat1)[:, None], np.radians(lon1)[:, None]
     lat2, lon2 = np.radians(lat2)[None, :], np.radians(lon2)[None, :]
@@ -71,10 +112,9 @@ def col_values(df, name, default):
         return df[name].fillna(default).to_numpy()
     return np.array([default] * len(df), dtype=object)
 
-# PENAMBAHAN CACHE DI SINI (Anti-CPU Throttle)
 @st.cache_data
-def build_coverage(df_tim, df_site, chunk=2000):
-    out_cols = ["Site ID", "Site Class", "Site Lat", "Site Long", "Nearest Team", "Team Lat", "Team Long", "Attitude", "Jarak (KM)"]
+def build_coverage(df_tim, df_site, df_program, chunk=2000):
+    out_cols = ["Site ID", "Site Class", "Site Lat", "Site Long", "Nearest Team", "Team Lat", "Team Long", "Attitude", "Jarak (KM)", "Program Aktif"]
     
     t_lat, t_lon = to_num(df_tim[TIM_LAT]), to_num(df_tim[TIM_LON])
     s_lat, s_lon = to_num(df_site[SITE_LAT]), to_num(df_site[SITE_LON])
@@ -98,7 +138,7 @@ def build_coverage(df_tim, df_site, chunk=2000):
         min_dist[sl] = d[np.arange(len(idx)), idx]
 
     best = teams.iloc[nearest]
-    return pd.DataFrame({
+    df_result = pd.DataFrame({
         "Site ID": col_values(sites, "Site ID", "Unknown Site"),
         "Site Class": col_values(sites, "Site Class", "Belum Ada Data"),
         "Site Lat": slat, "Site Long": slon,
@@ -107,6 +147,18 @@ def build_coverage(df_tim, df_site, chunk=2000):
         "Attitude": col_values(best, "ATTITUDE TIM", "UNKNOWN"),
         "Jarak (KM)": np.round(min_dist, 2),
     })
+
+    # Menggabungkan Data Program ke dalam Peta dan Tabel
+    if not df_program.empty and 'Site ID' in df_program.columns:
+        prog_agg = df_program.groupby('Site ID').apply(
+            lambda x: "<br>".join([f"• {str(row.get('Catagory',''))} <i>({str(row.get('Status',''))})</i>" for _, row in x.iterrows()])
+        ).reset_index(name='Program Aktif')
+        df_result = pd.merge(df_result, prog_agg, on='Site ID', how='left')
+        df_result['Program Aktif'] = df_result['Program Aktif'].fillna('-')
+    else:
+        df_result['Program Aktif'] = '-'
+
+    return df_result
 
 def attitude_color(att):
     att = str(att).upper()
@@ -133,6 +185,7 @@ init_state('df_tim', ['NO', 'Regional', 'Cluster', 'NAMA', 'Lat', 'Long', 'STATU
 init_state('df_site', ['Site ID', 'Site Class', 'Latitude Tujuan', 'Longtitude Tujuan']) 
 init_state('df_helpdesk', ['Nama Helpdesk', 'Area', 'Lat', 'Long', 'Kapasitas Handling'])
 init_state('df_sparepart', ['Kode Part', 'Nama Part', 'Kategori', 'Stok Fisik', 'Lokasi Simpan'])
+init_state('df_program', ['Site ID', 'Catagory', 'Ditail', 'Status', 'Pic'])
 
 # ==========================================
 # --- 4. MENU SIDEBAR ---
@@ -144,7 +197,8 @@ menu = st.sidebar.radio("Pilih Modul:", [
     "2. 👥 Monitoring Lamandau & Tim",
     "3. 🗺️ Team Re-Mapping & Coverage",
     "4. 🎧 Helpdesk Mapping",
-    "5. ⚙️ Spare Part Management"
+    "5. ⚙️ Spare Part Management",
+    "6. 📋 Program Nop Pbun"
 ])
 
 st.sidebar.markdown("---")
@@ -198,41 +252,48 @@ elif menu == "2. 👥 Monitoring Lamandau & Tim":
             if st.button("💾 Simpan Master Tim", use_container_width=True):
                 st.session_state.df_tim = clean_df(edited_tim, TIM_LAT, TIM_LON)
                 st.session_state.flash = "✅ Data Tim Berhasil Disimpan!"
-                build_coverage.clear() # Hapus cache lama jika Master Tim di-update
+                build_coverage.clear()
                 st.rerun()
         with col2:
             st.download_button("📥 Download Master Tim", convert_df_to_excel(st.session_state.df_tim, "Tim"), "Master_Tim.xlsx")
 
 # ----------------------------------------
-# MENU 3: TEAM RE-MAPPING & COVERAGE (DENGAN FILTER PENCARIAN)
+# MENU 3: TEAM RE-MAPPING & COVERAGE (DENGAN PROGRAM AKTIF)
 # ----------------------------------------
 elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
     st.header("Team Enhancement & Re-Mapping")
     
     if st.session_state.df_tim.empty or st.session_state.df_site.empty:
-        st.error("🚨 Anda belum meng-upload Master Data Tim atau Site. Peta tidak bisa digambar.")
-        st.info("Upload kedua file Excel Anda di bawah ini:")
-        col_up1, col_up2 = st.columns(2)
+        st.error("🚨 Anda belum meng-upload Master Data Tim atau Site.")
+        col_up1, col_up2, col_up3 = st.columns(3)
         with col_up1:
             f_tim = st.file_uploader("1. Upload tim_monitoring.xlsx", type=['xlsx'], key="up_map_tim")
         with col_up2:
             f_site = st.file_uploader("2. Upload site_master.xlsx", type=['xlsx'], key="up_map_site")
+        with col_up3:
+            f_prog = st.file_uploader("3. Program Nop Pbun (Opsional)", type=['xlsx'], key="up_map_prog")
+            
         if f_tim is not None and f_site is not None:
-            if st.button("🚀 PROSES KEDUA DATA & TAMPILKAN PETA", use_container_width=True, type="primary"):
+            if st.button("🚀 PROSES DATA & TAMPILKAN PETA", use_container_width=True, type="primary"):
                 f_tim.seek(0)
                 f_site.seek(0)
                 st.session_state.df_tim = clean_df(pd.read_excel(f_tim), TIM_LAT, TIM_LON)
                 st.session_state.df_site = clean_df(pd.read_excel(f_site), SITE_LAT, SITE_LON)
-                build_coverage.clear() # Bersihkan cache
-                st.session_state.flash = "✅ Data Tim dan Site Berhasil Dimuat!"
+                
+                if f_prog is not None:
+                    f_prog.seek(0)
+                    st.session_state.df_program = parse_program_excel(f_prog)
+                    
+                build_coverage.clear()
+                st.session_state.flash = "✅ Data Berhasil Dimuat!"
                 st.rerun()
 
     else:
         tab_map, tab_site = st.tabs(["🗺️ Peta Interaktif & Filter", "🗼 Update Master Site"])
         
         with tab_map:
-            # Menggunakan CACHE yang sudah diproses
-            df_coverage_master = build_coverage(st.session_state.df_tim, st.session_state.df_site)
+            # Kalkulasi Matriks beserta Gabungan Data Program
+            df_coverage_master = build_coverage(st.session_state.df_tim, st.session_state.df_site, st.session_state.df_program)
             
             with st.expander("🔍 Filter & Pencarian Spesifik (Site ID, Nama Tim, Role)", expanded=True):
                 col_f1, col_f2, col_f3 = st.columns(3)
@@ -268,8 +329,8 @@ elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
             if df_cov_filtered.empty and df_tim_filtered.empty:
                 st.warning("Pencarian tidak menemukan hasil. Silakan ubah kriteria filter Anda.")
             else:
-                lat_all = pd.concat([df_cov_filtered['Site Lat'], df_tim_filtered[TIM_LAT]]).dropna()
-                lon_all = pd.concat([df_cov_filtered['Site Long'], df_tim_filtered[TIM_LON]]).dropna()
+                lat_all = pd.concat([df_cov_filtered['Site Lat'], to_num(df_tim_filtered[TIM_LAT])]).dropna()
+                lon_all = pd.concat([df_cov_filtered['Site Long'], to_num(df_tim_filtered[TIM_LON])]).dropna()
                 
                 if not lat_all.empty and not lon_all.empty:
                     m = folium.Map(location=[lat_all.mean(), lon_all.mean()], zoom_start=8)
@@ -302,16 +363,28 @@ elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
                         folium.Circle(
                             location=[t_lat, t_lon], radius=stats['Max_Jarak'] * 1000, 
                             color=warna, weight=1, fill=True, fill_opacity=0.10,
-                            tooltip=f"🎈 Area Coverage {team_name} | {stats['Total_Site']} Site Terfilter"
+                            tooltip=f"🎈 Area Coverage {team_name} | {stats['Total_Site']} Site"
                         ).add_to(m)
 
                     html_popup = f"<div style='width: 200px;'><h4 style='color: {warna};'>{esc(team_name)}</h4><b>Role:</b> {esc(team.get('ROLE'))}<br><b>Attitude:</b> {esc(team.get('ATTITUDE TIM'))}<br><b>Site Di-cover:</b> {stats['Total_Site']}</div>"
                     folium.Marker([t_lat, t_lon], popup=folium.Popup(html_popup, max_width=250), icon=folium.Icon(color=warna, icon="user-gear", prefix="fa")).add_to(m)
 
+                # Menyelipkan data program ke dalam Popup Marker Peta
                 for row in df_cov_filtered.itertuples(index=False):
-                    html_site = f"<div style='width: 200px;'><h5 style='color: #2c3e50;'>🗼 {esc(row[0])}</h5><b>Class:</b> {esc(row[1])}<br><b>Di-cover oleh:</b> {esc(row[4])}<br><b>Jarak Tempuh:</b> {row[8]} KM</div>"
+                    # Index 9 adalah Program Aktif
+                    html_site = f"""
+                    <div style='width: 280px; font-family: sans-serif; font-size: 13px;'>
+                        <h5 style='color: #2c3e50; border-bottom: 1px solid #ccc; margin-bottom:5px;'>🗼 {esc(row[0])}</h5>
+                        <b>Class:</b> {esc(row[1])}<br>
+                        <b>Di-cover oleh:</b> {esc(row[4])}<br>
+                        <b>Jarak Tempuh:</b> {row[8]} KM<br>
+                        <hr style='margin: 8px 0;'>
+                        <b style='color:#d35400;'>Program Aktif di Site ini:</b><br>
+                        {row[9]}
+                    </div>
+                    """
                     folium.Marker(
-                        location=[row[2], row[3]], popup=folium.Popup(html_site, max_width=250),
+                        location=[row[2], row[3]], popup=folium.Popup(html_site, max_width=320),
                         tooltip=f"Site: {esc(row[0])} ({esc(row[1])})", 
                         icon=folium.Icon(color="darkblue", icon="tower-broadcast", prefix="fa")
                     ).add_to(m)
@@ -326,11 +399,11 @@ elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
                 st_folium(m, width=1300, height=500, returned_objects=[])
                 
                 st.markdown("---")
-                st.subheader(f"📊 Menampilkan Hasil Pencarian: {len(df_cov_filtered)} Site")
+                st.subheader(f"📊 Insight Analisis Site (Menampilkan {len(df_cov_filtered)} Site)")
                 
                 col_insight1, col_insight2 = st.columns([1, 2])
                 with col_insight1:
-                    st.markdown("**1. Distribusi Workload Hasil Pencarian**")
+                    st.markdown("**1. Distribusi Workload Tim**")
                     if not df_cov_filtered.empty:
                         df_workload = df_cov_filtered.groupby('Nearest Team')['Site ID'].count().reset_index()
                         df_workload.columns = ['Nama Tim', 'Total Site (Coverage)']
@@ -338,13 +411,14 @@ elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
                         st.dataframe(df_workload, use_container_width=True, height=350)
                     
                 with col_insight2:
-                    st.markdown("**2. Detail Jarak & Kategori Site Hasil Pencarian**")
+                    st.markdown("**2. Rekapan Penuh Site & Program Aktif**")
                     if not df_cov_filtered.empty:
-                        df_detail = df_cov_filtered[['Site ID', 'Site Class', 'Nearest Team', 'Attitude', 'Jarak (KM)']]
+                        # Menampilkan Status Program juga di dalam tabel
+                        df_detail = df_cov_filtered[['Site ID', 'Site Class', 'Nearest Team', 'Attitude', 'Jarak (KM)', 'Program Aktif']]
                         st.dataframe(df_detail, use_container_width=True, height=350)
                 
                 if not df_cov_filtered.empty:
-                    st.download_button("📥 Download Laporan Mapping (Hasil Filter)", convert_df_to_excel(df_cov_filtered, "Mapping_Coverage"), "Analisis_Mapping_Coverage.xlsx", type="primary", use_container_width=True)
+                    st.download_button("📥 Download Laporan Mapping Lengkap (Termasuk Program)", convert_df_to_excel(df_cov_filtered, "Mapping_Coverage"), "Analisis_Mapping_Coverage.xlsx", type="primary", use_container_width=True)
 
         with tab_site:
             st.info("💡 Tip: Anda dapat menambahkan kategori Bronze, Gold, atau Platinum pada kolom 'Site Class'.")
@@ -353,7 +427,7 @@ elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
             with col1:
                 if st.button("💾 Simpan Master Site", use_container_width=True):
                     st.session_state.df_site = clean_df(edited_site, SITE_LAT, SITE_LON)
-                    build_coverage.clear() # Hapus cache lama jika Master Site di-update
+                    build_coverage.clear()
                     st.session_state.flash = "✅ Data Site Berhasil Disimpan!"
                     st.rerun()
             with col2:
@@ -409,3 +483,33 @@ elif menu == "5. ⚙️ Spare Part Management":
                 st.rerun()
         with col2:
             st.download_button("📥 Download Master Spare Part", convert_df_to_excel(st.session_state.df_sparepart, "Sparepart"), "Master_Sparepart.xlsx")
+
+# ----------------------------------------
+# MENU 6: PROGRAM NOP PBUN (BARU)
+# ----------------------------------------
+elif menu == "6. 📋 Program Nop Pbun":
+    st.header("Manajemen Program Aktif & Activity")
+    st.markdown("Rekapan kegiatan/program yang sedang berjalan di site-site seluruh regional. *Data di sini akan otomatis diselipkan ke dalam Site pada Peta di Menu 3.*")
+    
+    if st.session_state.df_program.empty:
+        st.info("Upload file 'Program Nop Pbun.xlsx' Anda di bawah ini:")
+        f_prog = st.file_uploader("Upload Data Program", type=['xlsx'], key="up_prog_menu")
+        if f_prog:
+            if st.button("🚀 Proses Master Program", type="primary"):
+                f_prog.seek(0)
+                st.session_state.df_program = parse_program_excel(f_prog)
+                build_coverage.clear() # Reset memori peta agar program terbaru langsung masuk
+                st.session_state.flash = "✅ Master Program Berhasil Diproses!"
+                st.rerun()
+                
+    if not st.session_state.df_program.empty:
+        edited_prog = st.data_editor(st.session_state.df_program, num_rows="dynamic", use_container_width=True, height=400)
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            if st.button("💾 Simpan Master Program", use_container_width=True):
+                st.session_state.df_program = edited_prog
+                build_coverage.clear()
+                st.session_state.flash = "✅ Master Program Berhasil Diperbarui!"
+                st.rerun()
+        with col2:
+            st.download_button("📥 Download Master Program", convert_df_to_excel(st.session_state.df_program, "Program"), "Master_Program.xlsx")
