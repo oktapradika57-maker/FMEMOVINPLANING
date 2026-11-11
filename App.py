@@ -49,9 +49,12 @@ def clean_df(df, lat_col, lon_col):
                     df = df.rename(columns={lower_map[alias]: target})
                     break
 
+    # ANTI-CRASH: Paksa pastikan kolom koordinat selalu ada walau file user kacau
     for c in (lat_col, lon_col):
         if c in df.columns:
             df[c] = to_num(df[c])
+        else:
+            df[c] = np.nan 
 
     for c in df.columns:
         if df[c].dtype == object and pd.api.types.infer_dtype(df[c], skipna=True) in ("mixed", "mixed-integer"):
@@ -70,14 +73,18 @@ def col_values(df, name, default):
     return np.array([default] * len(df), dtype=object)
 
 def build_coverage(df_tim, df_site, chunk=2000):
+    out_cols = ["Site ID", "Site Class", "Site Lat", "Site Long", "Nearest Team", "Team Lat", "Team Long", "Attitude", "Jarak (KM)"]
+    
     t_lat, t_lon = to_num(df_tim[TIM_LAT]), to_num(df_tim[TIM_LON])
     s_lat, s_lon = to_num(df_site[SITE_LAT]), to_num(df_site[SITE_LON])
     team_ok = valid_coord(t_lat, t_lon)
     site_ok = valid_coord(s_lat, s_lon)
 
     teams, sites = df_tim[team_ok], df_site[site_ok]
+    
+    # ANTI-CRASH: Jika file yang diupload ternyata kosong atau tidak terbaca kordinatnya
     if teams.empty or sites.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=out_cols)
 
     tlat, tlon = t_lat[team_ok].to_numpy(), t_lon[team_ok].to_numpy()
     slat, slon = s_lat[site_ok].to_numpy(), s_lon[site_ok].to_numpy()
@@ -182,7 +189,8 @@ elif menu == "2. 👥 Monitoring Lamandau & Tim":
         if f_upload:
             if st.button("🚀 Proses Data", type="primary"):
                 f_upload.seek(0)
-                st.session_state.df_tim = pd.read_excel(f_upload)
+                # DIBERSIHKAN SEJAK AWAL AGAR TIDAK ERROR
+                st.session_state.df_tim = clean_df(pd.read_excel(f_upload), TIM_LAT, TIM_LON)
                 st.rerun()
     if not st.session_state.df_tim.empty:
         edited_tim = st.data_editor(st.session_state.df_tim, num_rows="dynamic", use_container_width=True, height=400)
@@ -213,8 +221,9 @@ elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
             if st.button("🚀 PROSES KEDUA DATA & TAMPILKAN PETA", use_container_width=True, type="primary"):
                 f_tim.seek(0)
                 f_site.seek(0)
-                st.session_state.df_tim = pd.read_excel(f_tim)
-                st.session_state.df_site = pd.read_excel(f_site)
+                # ANTI-CRASH: Langsung dibersihkan begitu masuk
+                st.session_state.df_tim = clean_df(pd.read_excel(f_tim), TIM_LAT, TIM_LON)
+                st.session_state.df_site = clean_df(pd.read_excel(f_site), SITE_LAT, SITE_LON)
                 st.session_state.flash = "✅ Data Tim dan Site Berhasil Dimuat!"
                 st.rerun()
 
@@ -222,16 +231,13 @@ elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
         tab_map, tab_site = st.tabs(["🗺️ Peta Interaktif & Filter", "🗼 Update Master Site"])
         
         with tab_map:
-            # 1. Bangun Dulu Seluruh Coverage (Master)
             df_coverage_master = build_coverage(st.session_state.df_tim, st.session_state.df_site)
             
-            # 2. PANEL FILTER (Search Engine)
             with st.expander("🔍 Filter & Pencarian Spesifik (Site ID, Nama Tim, Role)", expanded=True):
                 col_f1, col_f2, col_f3 = st.columns(3)
                 
-                # Mengambil nilai unik dari data untuk opsi filter
                 roles = st.session_state.df_tim['ROLE'].dropna().unique().tolist() if 'ROLE' in st.session_state.df_tim.columns else []
-                teams = st.session_state.df_tim['NAMA'].dropna().unique().tolist()
+                teams = st.session_state.df_tim['NAMA'].dropna().unique().tolist() if 'NAMA' in st.session_state.df_tim.columns else []
                 sites = df_coverage_master['Site ID'].dropna().unique().tolist() if not df_coverage_master.empty else []
 
                 with col_f1:
@@ -241,13 +247,12 @@ elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
                 with col_f3:
                     f_site = st.multiselect("Pencarian Site ID:", options=sites, placeholder="Ketik Site ID...")
 
-            # 3. LOGIKA PENERAPAN FILTER
             df_cov_filtered = df_coverage_master.copy()
             df_tim_filtered = st.session_state.df_tim.copy()
 
             if f_role:
                 df_tim_filtered = df_tim_filtered[df_tim_filtered['ROLE'].isin(f_role)]
-                valid_teams = df_tim_filtered['NAMA'].tolist()
+                valid_teams = df_tim_filtered['NAMA'].tolist() if 'NAMA' in df_tim_filtered.columns else []
                 df_cov_filtered = df_cov_filtered[df_cov_filtered['Nearest Team'].isin(valid_teams)]
 
             if f_nama:
@@ -256,27 +261,24 @@ elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
 
             if f_site:
                 df_cov_filtered = df_cov_filtered[df_cov_filtered['Site ID'].isin(f_site)]
-                # Jika filter site aktif, tampilkan hanya tim yang mengcover site tersebut
                 teams_for_sites = df_cov_filtered['Nearest Team'].unique()
                 df_tim_filtered = df_tim_filtered[df_tim_filtered['NAMA'].isin(teams_for_sites)]
 
-            # 4. RENDER PETA
             if df_cov_filtered.empty and df_tim_filtered.empty:
                 st.warning("Pencarian tidak menemukan hasil. Silakan ubah kriteria filter Anda.")
             else:
-                # Cari titik tengah & Auto Zoom berdasarkan data yang di-filter
-                lat_all = pd.concat([df_cov_filtered['Site Lat'], df_tim_filtered[TIM_LAT].apply(to_num)]).dropna()
-                lon_all = pd.concat([df_cov_filtered['Site Long'], df_tim_filtered[TIM_LON].apply(to_num)]).dropna()
+                # ANTI-CRASH: Fungsi matematika aman tanpa .apply() yang menyebabkan error sebelumnya
+                lat_all = pd.concat([df_cov_filtered['Site Lat'], df_tim_filtered[TIM_LAT]]).dropna()
+                lon_all = pd.concat([df_cov_filtered['Site Long'], df_tim_filtered[TIM_LON]]).dropna()
                 
                 if not lat_all.empty and not lon_all.empty:
                     m = folium.Map(location=[lat_all.mean(), lon_all.mean()], zoom_start=8)
-                    m.fit_bounds([[lat_all.min(), lon_all.min()], [lat_all.max(), lon_all.max()]]) # Auto Zoom presisi
+                    m.fit_bounds([[lat_all.min(), lon_all.min()], [lat_all.max(), lon_all.max()]]) 
                 else:
                     m = folium.Map(location=[-2.2, 113.9], zoom_start=6)
 
                 plugins.Fullscreen().add_to(m)
 
-                # Layer Control (Satelit)
                 folium.TileLayer('CartoDB positron', name='Peta Terang Standar').add_to(m)
                 folium.TileLayer(
                     tiles='https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
@@ -284,12 +286,10 @@ elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
                     overlay=False, control=True
                 ).add_to(m)
 
-                # Hitung workload untuk balon dari data yang difilter
                 workload_dict = df_cov_filtered.groupby('Nearest Team').agg(
                     Total_Site=('Site ID', 'count'), Max_Jarak=('Jarak (KM)', 'max')
                 ).reset_index().set_index('Nearest Team').to_dict('index')
 
-                # Render Marker Tim & Balon (Berdasarkan Tim yang terfilter)
                 team_ok = valid_coord(to_num(df_tim_filtered[TIM_LAT]), to_num(df_tim_filtered[TIM_LON]))
                 for _, team in df_tim_filtered[team_ok].iterrows():
                     team_name = team.get("NAMA", "Unknown")
@@ -308,7 +308,6 @@ elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
                     html_popup = f"<div style='width: 200px;'><h4 style='color: {warna};'>{esc(team_name)}</h4><b>Role:</b> {esc(team.get('ROLE'))}<br><b>Attitude:</b> {esc(team.get('ATTITUDE TIM'))}<br><b>Site Di-cover:</b> {stats['Total_Site']}</div>"
                     folium.Marker([t_lat, t_lon], popup=folium.Popup(html_popup, max_width=250), icon=folium.Icon(color=warna, icon="user-gear", prefix="fa")).add_to(m)
 
-                # Render Marker Site (Berdasarkan Site yang terfilter)
                 for row in df_cov_filtered.itertuples(index=False):
                     html_site = f"<div style='width: 200px;'><h5 style='color: #2c3e50;'>🗼 {esc(row[0])}</h5><b>Class:</b> {esc(row[1])}<br><b>Di-cover oleh:</b> {esc(row[4])}<br><b>Jarak Tempuh:</b> {row[8]} KM</div>"
                     folium.Marker(
@@ -326,24 +325,26 @@ elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
                 folium.LayerControl().add_to(m)
                 st_folium(m, width=1300, height=500, returned_objects=[])
                 
-                # --- TABEL HASIL FILTER ---
                 st.markdown("---")
                 st.subheader(f"📊 Menampilkan Hasil Pencarian: {len(df_cov_filtered)} Site")
                 
                 col_insight1, col_insight2 = st.columns([1, 2])
                 with col_insight1:
                     st.markdown("**1. Distribusi Workload Hasil Pencarian**")
-                    df_workload = df_cov_filtered.groupby('Nearest Team')['Site ID'].count().reset_index()
-                    df_workload.columns = ['Nama Tim', 'Total Site (Coverage)']
-                    df_workload = df_workload.sort_values('Total Site (Coverage)', ascending=False).reset_index(drop=True)
-                    st.dataframe(df_workload, use_container_width=True, height=350)
+                    if not df_cov_filtered.empty:
+                        df_workload = df_cov_filtered.groupby('Nearest Team')['Site ID'].count().reset_index()
+                        df_workload.columns = ['Nama Tim', 'Total Site (Coverage)']
+                        df_workload = df_workload.sort_values('Total Site (Coverage)', ascending=False).reset_index(drop=True)
+                        st.dataframe(df_workload, use_container_width=True, height=350)
                     
                 with col_insight2:
                     st.markdown("**2. Detail Jarak & Kategori Site Hasil Pencarian**")
-                    df_detail = df_cov_filtered[['Site ID', 'Site Class', 'Nearest Team', 'Attitude', 'Jarak (KM)']]
-                    st.dataframe(df_detail, use_container_width=True, height=350)
+                    if not df_cov_filtered.empty:
+                        df_detail = df_cov_filtered[['Site ID', 'Site Class', 'Nearest Team', 'Attitude', 'Jarak (KM)']]
+                        st.dataframe(df_detail, use_container_width=True, height=350)
                 
-                st.download_button("📥 Download Laporan Mapping (Hasil Filter)", convert_df_to_excel(df_cov_filtered, "Mapping_Coverage"), "Analisis_Mapping_Coverage.xlsx", type="primary", use_container_width=True)
+                if not df_cov_filtered.empty:
+                    st.download_button("📥 Download Laporan Mapping (Hasil Filter)", convert_df_to_excel(df_cov_filtered, "Mapping_Coverage"), "Analisis_Mapping_Coverage.xlsx", type="primary", use_container_width=True)
 
         with tab_site:
             st.info("💡 Tip: Anda dapat menambahkan kategori Bronze, Gold, atau Platinum pada kolom 'Site Class'.")
@@ -367,7 +368,7 @@ elif menu == "4. 🎧 Helpdesk Mapping":
         if f_hd:
             if st.button("🚀 Proses Data", type="primary"):
                 f_hd.seek(0)
-                st.session_state.df_helpdesk = pd.read_excel(f_hd)
+                st.session_state.df_helpdesk = clean_df(pd.read_excel(f_hd), HD_LAT, HD_LON)
                 st.rerun()
     if not st.session_state.df_helpdesk.empty:
         df_hd = st.session_state.df_helpdesk
