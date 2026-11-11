@@ -61,13 +61,14 @@ def clean_df(df, lat_col, lon_col):
     return df
 
 def parse_program_excel(f_upload):
-    """Fungsi auto-parse cerdas untuk membaca file Program Nop Pbun yang berantakan"""
+    """Fungsi auto-parse untuk membersihkan kolom Excel Program yang berantakan"""
     xls = pd.ExcelFile(f_upload)
     all_programs = []
     for s in xls.sheet_names:
         try:
             df = pd.read_excel(xls, sheet_name=s)
             header_row = -1
+            
             # Mencari baris yang mengandung tulisan Site Id
             for i, row in df.head(15).iterrows():
                 if any(str(v).strip().lower() in ['site id', 'site_id'] for v in row.values):
@@ -78,6 +79,9 @@ def parse_program_excel(f_upload):
                 df.columns = df.iloc[header_row]
                 df = df.iloc[header_row+1:].reset_index(drop=True)
                 df.columns = [str(c).strip() for c in df.columns]
+                
+                # ANTI-CRASH FIX: Menghapus duplikat nama kolom (Penyebab utama InvalidIndexError)
+                df = df.loc[:, ~df.columns.duplicated()]
                 
                 col_lower = {c.lower(): c for c in df.columns}
                 if 'site id' in col_lower:
@@ -148,7 +152,6 @@ def build_coverage(df_tim, df_site, df_program, chunk=2000):
         "Jarak (KM)": np.round(min_dist, 2),
     })
 
-    # Menggabungkan Data Program ke dalam Peta dan Tabel
     if not df_program.empty and 'Site ID' in df_program.columns:
         prog_agg = df_program.groupby('Site ID').apply(
             lambda x: "<br>".join([f"• {str(row.get('Catagory',''))} <i>({str(row.get('Status',''))})</i>" for _, row in x.iterrows()])
@@ -211,9 +214,6 @@ if "flash" in st.session_state:
 # --- 5. KONTEN BERDASARKAN MENU ---
 # ==========================================
 
-# ----------------------------------------
-# MENU 1 & 2 (RELOKASI & TIM)
-# ----------------------------------------
 if menu == "1. 🔋 Relokasi Battery":
     st.header("Relokasi Battery (Bronze to Gold & Platinum)")
     if st.session_state.df_relokasi.empty:
@@ -257,9 +257,6 @@ elif menu == "2. 👥 Monitoring Lamandau & Tim":
         with col2:
             st.download_button("📥 Download Master Tim", convert_df_to_excel(st.session_state.df_tim, "Tim"), "Master_Tim.xlsx")
 
-# ----------------------------------------
-# MENU 3: TEAM RE-MAPPING & COVERAGE (DENGAN PROGRAM AKTIF)
-# ----------------------------------------
 elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
     st.header("Team Enhancement & Re-Mapping")
     
@@ -292,7 +289,6 @@ elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
         tab_map, tab_site = st.tabs(["🗺️ Peta Interaktif & Filter", "🗼 Update Master Site"])
         
         with tab_map:
-            # Kalkulasi Matriks beserta Gabungan Data Program
             df_coverage_master = build_coverage(st.session_state.df_tim, st.session_state.df_site, st.session_state.df_program)
             
             with st.expander("🔍 Filter & Pencarian Spesifik (Site ID, Nama Tim, Role)", expanded=True):
@@ -369,9 +365,7 @@ elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
                     html_popup = f"<div style='width: 200px;'><h4 style='color: {warna};'>{esc(team_name)}</h4><b>Role:</b> {esc(team.get('ROLE'))}<br><b>Attitude:</b> {esc(team.get('ATTITUDE TIM'))}<br><b>Site Di-cover:</b> {stats['Total_Site']}</div>"
                     folium.Marker([t_lat, t_lon], popup=folium.Popup(html_popup, max_width=250), icon=folium.Icon(color=warna, icon="user-gear", prefix="fa")).add_to(m)
 
-                # Menyelipkan data program ke dalam Popup Marker Peta
                 for row in df_cov_filtered.itertuples(index=False):
-                    # Index 9 adalah Program Aktif
                     html_site = f"""
                     <div style='width: 280px; font-family: sans-serif; font-size: 13px;'>
                         <h5 style='color: #2c3e50; border-bottom: 1px solid #ccc; margin-bottom:5px;'>🗼 {esc(row[0])}</h5>
@@ -413,7 +407,6 @@ elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
                 with col_insight2:
                     st.markdown("**2. Rekapan Penuh Site & Program Aktif**")
                     if not df_cov_filtered.empty:
-                        # Menampilkan Status Program juga di dalam tabel
                         df_detail = df_cov_filtered[['Site ID', 'Site Class', 'Nearest Team', 'Attitude', 'Jarak (KM)', 'Program Aktif']]
                         st.dataframe(df_detail, use_container_width=True, height=350)
                 
@@ -433,9 +426,6 @@ elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
             with col2:
                 st.download_button("📥 Download Master Site", convert_df_to_excel(st.session_state.df_site, "Site"), "Master_Site.xlsx")
 
-# ----------------------------------------
-# MENU 4 & 5 (HELPDESK & SPARE PART)
-# ----------------------------------------
 elif menu == "4. 🎧 Helpdesk Mapping":
     st.header("Helpdesk Mapping - Pangkalanbun")
     if st.session_state.df_helpdesk.empty:
@@ -484,9 +474,6 @@ elif menu == "5. ⚙️ Spare Part Management":
         with col2:
             st.download_button("📥 Download Master Spare Part", convert_df_to_excel(st.session_state.df_sparepart, "Sparepart"), "Master_Sparepart.xlsx")
 
-# ----------------------------------------
-# MENU 6: PROGRAM NOP PBUN (BARU)
-# ----------------------------------------
 elif menu == "6. 📋 Program Nop Pbun":
     st.header("Manajemen Program Aktif & Activity")
     st.markdown("Rekapan kegiatan/program yang sedang berjalan di site-site seluruh regional. *Data di sini akan otomatis diselipkan ke dalam Site pada Peta di Menu 3.*")
@@ -498,7 +485,7 @@ elif menu == "6. 📋 Program Nop Pbun":
             if st.button("🚀 Proses Master Program", type="primary"):
                 f_prog.seek(0)
                 st.session_state.df_program = parse_program_excel(f_prog)
-                build_coverage.clear() # Reset memori peta agar program terbaru langsung masuk
+                build_coverage.clear() 
                 st.session_state.flash = "✅ Master Program Berhasil Diproses!"
                 st.rerun()
                 
