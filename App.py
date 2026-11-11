@@ -156,21 +156,24 @@ if menu == "1. 🔋 Relokasi Battery":
     st.header("Relokasi Battery (Bronze to Gold & Platinum)")
     
     if st.session_state.df_relokasi.empty:
-        st.info("Tabel Relokasi masih kosong. Anda bisa meng-upload file Excel (contoh: relokasi.xlsx) atau langsung mengisinya di bawah.")
-        f_upload = st.file_uploader("Upload Data Relokasi (Excel)", type=['xlsx'])
+        st.info("Upload file Excel Relokasi Anda di bawah ini:")
+        f_upload = st.file_uploader("Upload Data Relokasi", type=['xlsx'], key="up_relo")
         if f_upload:
-            st.session_state.df_relokasi = pd.read_excel(f_upload)
-            st.rerun()
-            
-    edited_df = st.data_editor(st.session_state.df_relokasi, num_rows="dynamic", use_container_width=True, height=400)
-    col1, col2 = st.columns([1, 4])
-    with col1:
-        if st.button("💾 Update Relokasi", use_container_width=True):
-            st.session_state.df_relokasi = edited_df
-            st.session_state.flash = "✅ Data Relokasi Berhasil Disimpan!"
-            st.rerun()
-    with col2:
-        st.download_button("📥 Download Master Relokasi", convert_df_to_excel(st.session_state.df_relokasi, "Relokasi"), "Master_Relokasi.xlsx")
+            if st.button("🚀 Proses Data", type="primary"):
+                f_upload.seek(0)
+                st.session_state.df_relokasi = pd.read_excel(f_upload)
+                st.rerun()
+                
+    if not st.session_state.df_relokasi.empty:
+        edited_df = st.data_editor(st.session_state.df_relokasi, num_rows="dynamic", use_container_width=True, height=400)
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            if st.button("💾 Simpan Master Relokasi", use_container_width=True):
+                st.session_state.df_relokasi = edited_df
+                st.session_state.flash = "✅ Data Relokasi Berhasil Disimpan!"
+                st.rerun()
+        with col2:
+            st.download_button("📥 Download Master Relokasi", convert_df_to_excel(st.session_state.df_relokasi, "Relokasi"), "Master_Relokasi.xlsx")
 
 # ----------------------------------------
 # MENU 2: MONITORING TIM
@@ -179,17 +182,19 @@ elif menu == "2. 👥 Monitoring Lamandau & Tim":
     st.header("Monitoring Tim & Spesial Cluster")
     
     if st.session_state.df_tim.empty:
-        st.warning("⚠️ Data Tim kosong! Silakan upload file 'tim_monitoring.xlsx' Anda di sini:")
-        f_upload = st.file_uploader("Upload tim_monitoring.xlsx", type=['xlsx'])
+        st.warning("⚠️ Data Tim kosong! Silakan upload file 'tim_monitoring.xlsx' Anda:")
+        f_upload = st.file_uploader("Upload tim_monitoring.xlsx", type=['xlsx'], key="up_tim")
         if f_upload:
-            st.session_state.df_tim = pd.read_excel(f_upload)
-            st.rerun()
+            if st.button("🚀 Proses Data", type="primary"):
+                f_upload.seek(0)
+                st.session_state.df_tim = pd.read_excel(f_upload)
+                st.rerun()
 
     if not st.session_state.df_tim.empty:
         edited_tim = st.data_editor(st.session_state.df_tim, num_rows="dynamic", use_container_width=True, height=400)
         col1, col2 = st.columns([1, 4])
         with col1:
-            if st.button("💾 Update Tim", use_container_width=True):
+            if st.button("💾 Simpan Master Tim", use_container_width=True):
                 st.session_state.df_tim = clean_df(edited_tim, TIM_LAT, TIM_LON)
                 st.session_state.flash = "✅ Data Tim Berhasil Disimpan!"
                 st.rerun()
@@ -202,31 +207,34 @@ elif menu == "2. 👥 Monitoring Lamandau & Tim":
 elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
     st.header("Team Enhancement & Re-Mapping")
     
-    # Peringatan jika data belum di-upload
     if st.session_state.df_tim.empty or st.session_state.df_site.empty:
         st.error("🚨 Anda belum meng-upload Master Data Tim atau Site. Peta tidak bisa digambar.")
-        st.info("Upload file Excel Anda di bawah ini:")
+        st.info("Upload kedua file Excel Anda di bawah ini:")
         col_up1, col_up2 = st.columns(2)
+        
         with col_up1:
-            f_tim = st.file_uploader("1. Upload tim_monitoring.xlsx", type=['xlsx'])
-            if f_tim:
-                st.session_state.df_tim = pd.read_excel(f_tim)
-                st.rerun()
+            f_tim = st.file_uploader("1. Upload tim_monitoring.xlsx", type=['xlsx'], key="up_map_tim")
         with col_up2:
-            f_site = st.file_uploader("2. Upload site_master.xlsx", type=['xlsx'])
-            if f_site:
+            f_site = st.file_uploader("2. Upload site_master.xlsx", type=['xlsx'], key="up_map_site")
+
+        # Tombol ini hanya akan muncul jika KEDUA file sudah ditaruh di kotak upload
+        if f_tim is not None and f_site is not None:
+            if st.button("🚀 PROSES KEDUA DATA & TAMPILKAN PETA", use_container_width=True, type="primary"):
+                f_tim.seek(0)
+                f_site.seek(0)
+                st.session_state.df_tim = pd.read_excel(f_tim)
                 st.session_state.df_site = pd.read_excel(f_site)
+                st.session_state.flash = "✅ Data Tim dan Site Berhasil Dimuat!"
                 st.rerun()
 
-    # Jika data sudah lengkap, tampilkan Peta & Tabel
-    if not st.session_state.df_tim.empty and not st.session_state.df_site.empty:
+    else:
         tab_map, tab_site = st.tabs(["🗺️ Peta & Analisis Beban Kerja", "🗼 Update Master Site"])
         
         with tab_map:
             df_coverage = build_coverage(st.session_state.df_tim, st.session_state.df_site)
             
             if df_coverage.empty:
-                st.warning("Pastikan format kolom koordinat Tim dan Site (Lat/Long) sudah terisi.")
+                st.warning("Pastikan format kolom koordinat Tim dan Site (Lat/Long) sudah terisi dengan angka yang benar.")
             else:
                 m = folium.Map(location=[df_coverage["Site Lat"].mean(), df_coverage["Site Long"].mean()], zoom_start=8, tiles="CartoDB positron")
                 plugins.Fullscreen().add_to(m)
@@ -265,12 +273,12 @@ elif menu == "3. 🗺️ Team Re-Mapping & Coverage":
             edited_site = st.data_editor(st.session_state.df_site, num_rows="dynamic", use_container_width=True, height=400)
             col1, col2 = st.columns([1, 4])
             with col1:
-                if st.button("💾 Update Site", use_container_width=True):
+                if st.button("💾 Simpan Master Site", use_container_width=True):
                     st.session_state.df_site = clean_df(edited_site, SITE_LAT, SITE_LON)
                     st.session_state.flash = "✅ Data Site Berhasil Disimpan!"
                     st.rerun()
             with col2:
-                st.download_button("📥 Master Site (Excel)", convert_df_to_excel(st.session_state.df_site, "Site"), "Master_Site.xlsx")
+                st.download_button("📥 Download Master Site", convert_df_to_excel(st.session_state.df_site, "Site"), "Master_Site.xlsx")
 
 # ----------------------------------------
 # MENU 4: HELPDESK MAPPING
@@ -279,30 +287,33 @@ elif menu == "4. 🎧 Helpdesk Mapping":
     st.header("Helpdesk Mapping - Pangkalanbun")
     
     if st.session_state.df_helpdesk.empty:
-        st.info("Upload file Helpdesk.xlsx jika Anda punya datanya, atau ketik langsung di tabel bawah.")
-        f_hd = st.file_uploader("Upload Data Helpdesk", type=['xlsx'])
+        st.info("Upload file Helpdesk.xlsx Anda:")
+        f_hd = st.file_uploader("Upload Data Helpdesk", type=['xlsx'], key="up_hd")
         if f_hd:
-            st.session_state.df_helpdesk = pd.read_excel(f_hd)
-            st.rerun()
+            if st.button("🚀 Proses Data", type="primary"):
+                f_hd.seek(0)
+                st.session_state.df_helpdesk = pd.read_excel(f_hd)
+                st.rerun()
 
-    df_hd = st.session_state.df_helpdesk
-    if not df_hd.empty and HD_LAT in df_hd.columns:
-        hd_ok = valid_coord(to_num(df_hd[HD_LAT]), to_num(df_hd[HD_LON]))
-        if hd_ok.any():
-            m_hd = folium.Map(location=[to_num(df_hd.loc[hd_ok, HD_LAT]).mean(), to_num(df_hd.loc[hd_ok, HD_LON]).mean()], zoom_start=9)
-            for _, row in df_hd[hd_ok].iterrows():
-                folium.Marker([float(row[HD_LAT]), float(row[HD_LON])], popup=f"<b>{row['Nama Helpdesk']}</b>", icon=folium.Icon(color="purple", icon="headphones", prefix="fa")).add_to(m_hd)
-            st_folium(m_hd, width=1300, height=400, returned_objects=[])
-            
-    edited_hd = st.data_editor(df_hd, num_rows="dynamic", use_container_width=True)
-    col1, col2 = st.columns([1, 4])
-    with col1:
-        if st.button("💾 Update Helpdesk", use_container_width=True):
-            st.session_state.df_helpdesk = clean_df(edited_hd, HD_LAT, HD_LON)
-            st.session_state.flash = "✅ Data Helpdesk Disimpan!"
-            st.rerun()
-    with col2:
-        st.download_button("📥 Master Helpdesk", convert_df_to_excel(st.session_state.df_helpdesk, "Helpdesk"), "Master_Helpdesk.xlsx")
+    if not st.session_state.df_helpdesk.empty:
+        df_hd = st.session_state.df_helpdesk
+        if HD_LAT in df_hd.columns:
+            hd_ok = valid_coord(to_num(df_hd[HD_LAT]), to_num(df_hd[HD_LON]))
+            if hd_ok.any():
+                m_hd = folium.Map(location=[to_num(df_hd.loc[hd_ok, HD_LAT]).mean(), to_num(df_hd.loc[hd_ok, HD_LON]).mean()], zoom_start=9)
+                for _, row in df_hd[hd_ok].iterrows():
+                    folium.Marker([float(row[HD_LAT]), float(row[HD_LON])], popup=f"<b>{row['Nama Helpdesk']}</b>", icon=folium.Icon(color="purple", icon="headphones", prefix="fa")).add_to(m_hd)
+                st_folium(m_hd, width=1300, height=400, returned_objects=[])
+                
+        edited_hd = st.data_editor(df_hd, num_rows="dynamic", use_container_width=True)
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            if st.button("💾 Simpan Master Helpdesk", use_container_width=True):
+                st.session_state.df_helpdesk = clean_df(edited_hd, HD_LAT, HD_LON)
+                st.session_state.flash = "✅ Data Helpdesk Disimpan!"
+                st.rerun()
+        with col2:
+            st.download_button("📥 Download Master Helpdesk", convert_df_to_excel(st.session_state.df_helpdesk, "Helpdesk"), "Master_Helpdesk.xlsx")
 
 # ----------------------------------------
 # MENU 5: SPARE PART MANAGEMENT
@@ -311,18 +322,21 @@ elif menu == "5. ⚙️ Spare Part Management":
     st.header("Spare Part Management")
     
     if st.session_state.df_sparepart.empty:
-        st.info("Upload file Sparepart.xlsx jika Anda punya datanya.")
-        f_sp = st.file_uploader("Upload Data Spare Part", type=['xlsx'])
+        st.info("Upload file Sparepart.xlsx Anda:")
+        f_sp = st.file_uploader("Upload Data Spare Part", type=['xlsx'], key="up_sp")
         if f_sp:
-            st.session_state.df_sparepart = pd.read_excel(f_sp)
-            st.rerun()
-            
-    edited_sp = st.data_editor(st.session_state.df_sparepart, num_rows="dynamic", use_container_width=True, height=400)
-    col1, col2 = st.columns([1, 4])
-    with col1:
-        if st.button("💾 Update Sparepart", use_container_width=True):
-            st.session_state.df_sparepart = edited_sp
-            st.session_state.flash = "✅ Data Spare Part Disimpan!"
-            st.rerun()
-    with col2:
-        st.download_button("📥 Master Spare Part", convert_df_to_excel(st.session_state.df_sparepart, "Sparepart"), "Master_Sparepart.xlsx")
+            if st.button("🚀 Proses Data", type="primary"):
+                f_sp.seek(0)
+                st.session_state.df_sparepart = pd.read_excel(f_sp)
+                st.rerun()
+                
+    if not st.session_state.df_sparepart.empty:
+        edited_sp = st.data_editor(st.session_state.df_sparepart, num_rows="dynamic", use_container_width=True, height=400)
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            if st.button("💾 Simpan Master Sparepart", use_container_width=True):
+                st.session_state.df_sparepart = edited_sp
+                st.session_state.flash = "✅ Data Spare Part Disimpan!"
+                st.rerun()
+        with col2:
+            st.download_button("📥 Download Master Spare Part", convert_df_to_excel(st.session_state.df_sparepart, "Sparepart"), "Master_Sparepart.xlsx")
